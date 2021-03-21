@@ -1,0 +1,318 @@
+---
+title: "Lab 9"
+author: "Vanessa Tang"
+date: "2/21/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Chapter 9: R Tutorial on Network Centrality and Hierarchy
+
+## 1. Setting up the Session and Reading in Example Network Data
+
+```{r}
+library(igraph)
+
+social_data=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/social_interactions_s641.csv")
+head(social_data) 
+
+edgelist_social=social_data[social_data$social_tie>0, ] 
+head(edgelist_social)
+
+# create igraph object
+s641_social=graph_from_data_frame(d=edgelist_social, directed=T, 
+                                    vertices=(id=1:22)) 
+
+# task data
+task_data=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/task_interactions_s641.csv")
+head(task_data)
+
+edgelist_task=task_data[task_data$task_tie>0, ] 
+
+s641_task=graph_from_data_frame(d=edgelist_task, directed=T, 
+                                  vertices=(id=1:22)) 
+```
+
+Plotting networks
+```{r}
+par(mfrow=c(1,2)) 
+
+plot(s641_social, vertex.frame.color=NA, edge.arrow.size=.25, 
+    vertex.size=8, main="Social Interactions", margin=0)
+
+plot(s641_task, vertex.frame.color=NA, edge.arrow.size=.25, 
+     vertex.size=8, main="Task Interactions", margin=0)
+```
+- Really cool to compare and see differences between social vs task
+
+## 2. Centrality
+
+### 2.1 Centrality Measures for Social Interactions
+
+Indegree
+```{r}
+indegree_social=degree(graph=s641_social, mode="in")
+data.frame(indegree_social)
+```
+
+Outdegree
+```{r}
+outdegree_social=degree(graph=s641_social, mode="out")
+data.frame(outdegree_social)
+```
+
+Out closeness: mean distance of each node to all other nodes
+```{r}
+outcloseness_social=closeness(graph=s641_social, mode="out", normalized=F)
+data.frame(outcloseness_social)
+```
+
+In closness
+```{r}
+incloseness_social=closeness(graph=s641_social, mode="in", normalized=F)
+data.frame(incloseness_social)
+```
+
+Can use distance matrix to solve problem of infinite distances (isolates)
+```{r}
+dist_mat_social=distances(graph=s641_social, mode="out") #calculating the 
+#distance matrix
+diag(dist_mat_social)=NA #ignoring the diagonal
+dist_mat_social_inverted=1/dist_mat_social #getting inverted distance matrix
+
+outcloseness_social2=apply(dist_mat_social_inverted, MARGIN=1, 
+                           FUN=mean, na.rm=T) 
+data.frame(outcloseness_social2)
+```
+
+Comparing different ways of calculating out closeness (function vs distance matrix)
+```{r}
+cor(outcloseness_social, outcloseness_social2) 
+```
+
+Another way to compute in closness using distance matrix
+```{r}
+incloseness_social2=apply(dist_mat_social_inverted, MARGIN=2,
+                          FUN=mean, na.rm=T) 
+data.frame(incloseness_social2)
+```
+
+Betweenness centrality: num of shortest paths going through vertex
+```{r}
+betweenness_social=betweenness(graph=s641_social, normalized=F) 
+data.frame(betweenness_social)
+```
+
+Eigenvector centrality: greater weight to node when more connected to other highly connected nodes
+- measuring node network importance
+```{r}
+s641_social_undirected=as.undirected(s641_social, mode="collapse") 
+
+# eigenvector centrality
+ev_obj_social=eigen_centrality(s641_social_undirected)
+eigen_social=ev_obj_social$vector
+
+data.frame(eigen_social)
+```
+
+```{r}
+ids=V(s641_social)$name
+
+central_social=data.frame(ids=ids, net="social",
+                            indegree=indegree_social,
+                            outdegree=outdegree_social,
+                            incloseness=incloseness_social, 
+                            incloseness2=incloseness_social2, 
+                            outcloseness2=outcloseness_social2,
+                            between=betweenness_social, 
+                            eigen=eigen_social)
+
+apply(central_social[, -c(1,2)], MARGIN=2, FUN=order, decreasing=T)
+```
+
+```{r}
+library(reshape)
+
+social_long=melt(central_social[,c("ids", "indegree", "incloseness2",
+                                   "between", "eigen")], id.vars="ids")  
+head(social_long)
+
+library(ggplot2)
+ggplot(social_long, aes(x=factor(ids, levels=1:length(ids)), y=value))+
+  geom_bar(stat="identity", position="dodge")+
+  facet_wrap(~variable, scales="free_y", ncol=2)+
+  xlab("Ids")+ylab("Centrality")+
+ theme(axis.text=element_text(size=6.5))
+```
+
+```{r}
+plot(s641_social, vertex.size=central_social$between/5, 
+     vertex.label=V(s641_social)$name, 
+     edge.arrow.size=0.25,
+     layout=layout.fruchterman.reingold, 
+     main="Classroom S641 Social Talk", margin=0) 
+```
+
+### 2.2. Correlations between Centrality Measures
+
+```{r}
+cor_tab1=cor(central_social[,-c(1,2)])
+round(cor_tab1[,c("indegree", "outdegree", "incloseness2", 
+                            "outcloseness2", "between", "eigen")], 3)
+```
+
+### 2.3. Centrality for Task Interactions
+
+```{r}
+indegree_task=degree(s641_task, mode="in")
+outdegree_task=degree(s641_task, mode="out")
+incloseness_task=closeness(s641_task, mode="in", normalized=F)
+outcloseness_task=closeness(s641_task, mode="out", normalized=F)
+
+dist_mat_task=distances(graph=s641_task, mode="out")
+diag(dist_mat_task)=NA
+dist_mat_task_inverted= 1/dist_mat_task
+
+outcloseness_task2=apply(dist_mat_task_inverted, MARGIN=1, FUN=mean, na.rm=T)
+incloseness_task2=apply(dist_mat_task_inverted, MARGIN=2, FUN=mean, na.rm=T) 
+
+betweenness_task=betweenness(s641_task, normalized=F)
+
+s641_task_undirected=as.undirected(s641_task, mode="collapse")
+ev_obj_task=evcent(s641_task_undirected)
+eigen_task=ev_obj_task$vector
+
+central_task=data.frame(ids=ids, net="task",
+                          indegree=indegree_task,
+                          outdegree=outdegree_task,
+                          incloseness=incloseness_task,
+                          incloseness2=incloseness_task2, 
+                          outcloseness2=outcloseness_task2, 
+                          between=betweenness_task, 
+                          eigen=eigen_task)
+
+apply(central_task[, -c(1,2)], MARGIN=2, FUN=order, decreasing=T)
+```
+
+```{r}
+plot(s641_task, vertex.size=central_task$indegree, 
+     vertex.label=V(s641_social)$name, edge.arrow.size=0.25,
+     layout=layout.fruchterman.reingold, 
+     main="Classroom S641 Task Interactions", margin=0)
+```
+
+### 2.4. Task/Social Correlations
+
+```{r}
+task_long=melt(central_task[,c("ids", "indegree", "incloseness2",
+                               "between", "eigen")], id.vars="ids") 
+head(task_long)
+
+task_long$net="task"
+social_long$net="social"
+
+social_task_long=rbind(social_long, task_long)
+
+ggplot(social_task_long, 
+       aes(x=factor(ids, levels=1:length(ids)), y=value, fill=net))+
+  geom_bar(stat="identity", position="dodge")+
+  facet_wrap(~variable, scales="free_y", ncol=2)+ 
+  scale_fill_discrete(name="Network", breaks=c("social", "task"), 
+                      labels=c("Social", "Task"))+
+  xlab("Ids")+ylab("Centrality")+
+  theme(axis.text=element_text(size=6.5))
+
+```
+
+```{r}
+cor_tab2=cor(central_social[,-c(1,2)], central_task[,-c(1,2)])
+rownames(cor_tab2)=paste(rownames(cor_tab2), "social", sep="_")
+colnames(cor_tab2)=paste(colnames(cor_tab2), "task", sep="_") 
+round(cor_tab2[,c("eigen_task", "indegree_task", "outdegree_task")], 3)
+```
+
+## 3. Centralization and the Distribution of Centrality
+
+```{r}
+summary(indegree_social)
+summary(indegree_task)
+sd(indegree_social)
+sd(indegree_task)
+```
+
+```{r}
+cent_social=centr_degree(graph=s641_social, mode="in", 
+                         loops=FALSE, normalized=TRUE)
+cent_social
+```
+
+```{r}
+sum(max(indegree_social)-indegree_social)/sum(21-rep(0,21)) 
+```
+
+```{r}
+cent_task=centr_degree(graph=s641_task, mode="in", loops=FALSE, 
+                       normalized = TRUE)
+cent_task
+```
+
+```{r}
+den_social=density(indegree_social, from=0) #from is set to 0 as indegree
+#cannot be less than 0.
+den_task=density(indegree_task, from=0)
+
+# plot
+plot(range(den_social$x, den_task$x), range(den_social$y,den_task$y), 
+     type="n", xlab="degree", ylab="density", 
+     main="Indegree Distribution for Social and Task Networks")
+lines(den_social, col="red" , lty=2, lwd=2)
+lines(den_task, col="light blue", lty=2, lwd=2)
+legend("topright", c("Social", "Task"), col=c("red", "light blue"), 
+       lty=2, lwd=2) 
+```
+- task network much more centralized
+
+## 4. Clustering and Hierarchy: Tau Statistic
+
+```{r}
+library(intergraph)
+
+s641_social_network=asNetwork(s641_social)
+
+source(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/R/tau_functions.R")
+
+library(ergm)
+library(sna)
+```
+
+```{r}
+weight_vector_rankedcluster=c(1, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1)
+weight_vector_cluster=c(1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+weight_vector_balance=c(0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+
+tau_rankedcluster=tau_stat_function(network=s641_social_network, 
+                                    weight.vector=weight_vector_rankedcluster)
+tau_rankedcluster 
+```
+
+```{r}
+tau_cluster=tau_stat_function(network=s641_social_network, 
+                              weight.vector=weight_vector_cluster)
+tau_cluster
+```
+
+```{r}
+tau_balance=tau_stat_function(network=s641_social_network, 
+                              weight.vector=weight_vector_balance)
+tau_balance
+```
+
+```{r}
+tau_rankedcluster[[2]][rownames(tau_rankedcluster[[2]]) %in% 
+                         c("triadcensus.021D", "triadcensus.021U", 
+                           "triadcensus.030T", "triadcensus.120D",  
+                           "triadcensus.120U"), ]
+```

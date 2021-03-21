@@ -1,0 +1,379 @@
+---
+title: "Lab 13a"
+author: "Vanessa Tang"
+date: "3/20/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Chapter 13: R Tutorial on Statistical Network Models for Cross-Sectional Network Data
+
+```{r}
+library(ergm)
+library(sna)
+library(car)
+
+school_mat=read.csv("https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/example_schoolmat.csv", row.names=1) 
+school_mat=as.matrix(school_mat)
+
+school_attributes=read.csv("https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/example_schooldata.csv") 
+school_attributes$gender_recode=recode(school_attributes$gender,
+                                       as.factor=F, 
+                                       "c(0)='male'; c(1)='female'")
+attribute_list=do.call(list, school_attributes) 
+school_net=network(x=school_mat, directed=T, vertex.attr=attribute_list)
+
+cols=recode(school_attributes$gender, as.factor=F, 
+            "c(0)='blue'; c(1)='pink'")
+plot(school_net, vertex.col=cols) 
+
+plot(school_net, vertex.col=school_attributes$grade) 
+```
+
+```{r}
+outdegree=degree(school_net, cmode="outdegree")
+indegree=degree(school_net, cmode="indegree")
+tapply(indegree, school_attributes$gender_recode, mean) 
+tapply(outdegree, school_attributes$gender_recode, mean) 
+```
+
+```{r}
+gden(school_net) 
+cug.test(dat=school_net, FUN="gden", cmode="size") 
+```
+
+```{r}
+grecip(school_net, measure="dyadic.nonnull")
+cug.test(dat=school_net, FUN="grecip", 
+         FUN.args=list(measure="dyadic.nonnull"), cmode="edges") 
+```
+
+```{r}
+mod_rand=ergm(formula=school_net ~ edges) 
+summary(mod_rand) 
+
+summary(school_net~edges) 
+```
+
+```{r}
+mod_homoph1=ergm(school_net ~ edges + nodematch("gender_recode") + 
+                     nodematch("grade")) 
+
+summary(mod_homoph1)
+```
+
+```{r}
+mod_homoph2=ergm(school_net ~ edges + nodematch("gender_recode") + 
+                     nodematch("grade") + nodeifactor("gender_recode") + 
+                     nodeofactor("gender_recode") +
+                     nodeicov("grade") + nodeocov("grade"))
+
+summary(mod_homoph2) 
+```
+
+```{r}
+set.seed(1002)
+mod_homoph_mutual1=ergm(school_net ~ edges + nodematch("gender_recode") + 
+                          nodematch("grade") + 
+                          nodeifactor("gender_recode") + 
+                          nodeofactor("gender_recode") + 
+                          nodeicov("grade") + 
+                          nodeocov("grade") + mutual) 
+summary(mod_homoph_mutual1)
+```
+
+```{r}
+mcmc.diagnostics(mod_homoph_mutual1, vars.per.page=4)
+```
+- a bit confused about this
+
+```{r}
+mod_homoph_mutual1b=ergm(school_net ~ edges + nodematch("gender_recode") + 
+                           nodematch("grade") + 
+                           nodeifactor("gender_recode") + 
+                           nodeofactor("gender_recode") + nodeicov("grade") + 
+                           nodeocov("grade") + mutual,
+                         control=control.ergm(MCMC.burnin=50000, 
+                                              MCMC.samplesize=5000))
+
+summary(mod_homoph_mutual1b)
+```
+
+```{r}
+mod_homoph_mutual1c=ergm(school_net ~ edges + nodematch("gender_recode") + 
+                             nodematch("grade") + nodeicov("grade") + 
+                             nodeocov("grade") + mutual(by="gender_recode"),
+                         control=control.ergm(MCMC.burnin=50000, 
+                                              MCMC.samplesize=5000))
+summary(mod_homoph_mutual1c)
+```
+
+```{r}
+mod_homoph_mutual1d=ergm(school_net ~ edges + nodematch("gender_recode") + 
+                           nodematch("grade") + 
+                           nodeofactor("gender_recode") + 
+                           nodeicov("grade") + nodeocov("grade") + 
+                           mutual(by="gender_recode"),
+                         control=control.ergm(MCMC.burnin=50000, 
+                                              MCMC.samplesize=5000))
+
+summary(mod_homoph_mutual1d)
+```
+
+```{r}
+summary(school_net~esp(0:10)) 
+
+gof_mod_homoph_mutual1=gof(mod_homoph_mutual1~distance+espartners+model) 
+par(mfrow=c(1,3)) 
+plot(gof_mod_homoph_mutual1)
+
+gof_mod_homoph_mutual1
+```
+- not sure how to interpret this
+
+```{r}
+mod_homoph_mutual2=ergm(school_net ~ edges + nodematch("gender_recode") +
+                            nodematch("grade", diff=T) +
+                            nodeifactor("gender_recode") +
+                            nodeofactor("gender_recode") + 
+                            nodeicov("grade") +nodeocov("grade") + mutual)
+
+summary(mod_homoph_mutual2)
+```
+
+```{r}
+gof_mod_homoph_mutual2=gof(mod_homoph_mutual2~distance+espartners+model) 
+par(mfrow=c(1,3)) 
+plot(gof_mod_homoph_mutual2)
+```
+
+```{r}
+mod_triangle=ergm(school_net ~ edges + nodematch("gender_recode") + 
+                      nodematch("grade") + nodeifactor("gender_recode") + 
+                      nodeofactor("gender_recode") + 
+                      nodeicov("grade") + nodeocov("grade") + 
+                      mutual + triangle, 
+                  control=control.ergm(MCMLE.maxit=1))
+
+mcmc.diagnostics(mod_triangle) 
+```
+
+```{r}
+plot(mod_triangle$newnetwork) 
+```
+
+```{r}
+mod_homoph_mutual_gwesp1=ergm(school_net ~ edges + 
+                                  nodematch("gender_recode") + 
+                                  nodematch("grade") + 
+                                  nodeifactor("gender_recode") + 
+                                  nodeofactor("gender_recode") + 
+                                  nodeicov("grade") + nodeocov("grade") + 
+                                  mutual + gwesp(decay=1, fixed=T), 
+                        control=control.ergm(MCMLE.maxit=3))
+mcmc.diagnostics(mod_homoph_mutual_gwesp1)
+```
+- did not converge well
+
+```{r}
+mod_homoph_mutual_gwesp2=ergm(school_net ~ edges + 
+                                nodematch("gender_recode") + 
+                                nodematch("grade") + 
+                                nodeifactor("gender_recode") + 
+                                nodeofactor("gender_recode") + 
+                                nodeicov("grade") + nodeocov("grade") + 
+                                mutual + gwesp(decay=.5, fixed=T), 
+                              control=control.ergm(MCMC.burnin=25000,           
+                                                   MCMC.samplesize=5000,
+                                                   parallel=2, 
+                                                   parallel.type="PSOCK"))
+mcmc.diagnostics(mod_homoph_mutual_gwesp2, vars.per.page=3) 
+```
+
+```{r}
+gof_mod_homoph_mutual_gwesp2=gof(mod_homoph_mutual_gwesp2~distance+espartners
+                                 +model) 
+par(mfrow=c(1,3))
+plot(gof_mod_homoph_mutual_gwesp2) 
+```
+
+```{r}
+summary(mod_homoph_mutual2)
+summary(mod_homoph_mutual_gwesp2)
+```
+
+```{r}
+sim_schoolnet=simulate(mod_homoph_mutual_gwesp2, nsim=1, seed=100,
+                       control=control.simulate.ergm(MCMC.burnin=100000))
+par(mfrow=c(1,2))
+plot(school_net, vertex.col="grade", main="True Network")
+plot(sim_schoolnet, vertex.col="grade", main="Simulated Network") 
+```
+
+```{r}
+net=network.initialize(n=32, directed=T)
+net %v% "grade"=get.vertex.attribute(school_net, "grade")
+net
+summary(school_net ~ edges + nodematch("grade")) 
+
+# strong
+mod_stronghomophily=ergm(net ~ edges + nodematch("grade"), 
+                        target.stats=c(124, 93)) 
+mod_weakhomophily=ergm(net ~ edges + nodematch("grade"), 
+                       target.stats=c(124, 31))
+sim_strong_homophily=simulate(mod_stronghomophily, seed=1000) 
+summary(sim_strong_homophily ~ edges + nodematch("grade")) 
+
+# weak
+sim_weak_homophily=simulate(mod_weakhomophily, seed=103) 
+summary(sim_weak_homophily ~ edges + nodematch("grade")) 
+```
+
+```{r}
+par(mfrow=c(1,2))
+plot(sim_weak_homophily, vertex.col="grade", main="Weak Homophily")
+plot(sim_strong_homophily, vertex.col="grade", main="Strong Homophily")
+```
+
+```{r}
+gtrans(sim_weak_homophily)
+gtrans(sim_strong_homophily)
+```
+
+Larger Network
+```{r}
+coauthor_edgelist=read.table(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/coauthorship_edgelist.txt", header=T)
+coauthor_attributes=read.table(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/coauthorship_attributes.txt", header=T)
+
+coauthor_attributes$prestige=recode(coauthor_attributes $prestige,
+                                     as.factor=F, 
+                                     "0='low prestige'; 1='high prestige'")
+
+coauthor_attributes$research_type=recode(coauthor_attributes $research_type, 
+                                          as.factor=F, 
+                                          "0='qualitative'; 1='quantitative'; 
+                                         2='mixed'")
+
+attr(coauthor_edgelist,"n")=60098 
+coauthorship_attribute_list=do.call(list, coauthor_attributes) 
+
+coauthorship_net=network(x=coauthor_edgelist, directed=F, 
+                         vertex.attr=coauthorship_attribute_list) 
+coauthorship_net 
+```
+- error reading in file?
+
+```{r}
+mod1=ergm(coauthorship_net ~ edges + nodematch("research_type") +
+              nodematch("prestige"))
+
+summary(mod1)
+```
+
+```{r}
+mod2=ergm(coauthorship_net ~ edges + nodematch("research_type") +
+              nodematch("prestige") + nodefactor("research_type") +
+              nodefactor("prestige"))
+
+summary(mod2)
+```
+
+```{r}
+library(ergm.ego)
+
+coauthorship_egodat=as.egodata(coauthorship_net)
+
+set.seed(200)
+coauthorship_samp=sample(coauthorship_egodat, 25000, replace=T)
+
+mod1_samp=ergm.ego(coauthorship_samp ~ edges + nodematch("research_type") + 
+                       nodematch("prestige"),
+                     control=control.ergm.ego(ergm.control=control.ergm(parallel=2)))
+summary(mod1_samp)
+```
+
+```{r}
+social_interactions=read.table("https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/social_interaction_edgelist.txt", header=T)
+
+attributes=read.table("https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/social_interaction_attributes.txt", header=T, stringsAsFactors=F)
+
+attribute_list=do.call(list, attributes)
+attr(social_interactions, "n")=18
+social_net=network(x=social_interactions, directed=F, 
+                   vertex.attr=attribute_list)
+set.edge.attribute(x=social_net, attrname="weight", 
+                   value=social_interactions$count)
+social_net
+```
+
+```{r}
+library(ggplot2)
+library(GGally)
+
+ggnet2(social_net, node.color="gender", node.size=7,
+       palette=c("male"="navy", "female"="lightskyblue"), 
+       edge.size=get.edge.attribute(social_net, "weight")/2.75, 
+       edge.color="grey80")+
+  guides(size=FALSE)
+```
+- really cool!
+
+```{r}
+library(ergm.count)
+
+count_mod1=ergm(social_net ~ sum, response="weight", reference = ~Poisson, 
+                control=control.ergm(MCMLE.trustregion=200))
+summary(count_mod1)
+```
+
+```{r}
+count_mod2=ergm(social_net ~ sum + nodematch("gender", form="sum") + 
+                  nodematch("race", form="sum") + 
+                  nodefactor("gender", form="sum") + 
+                  nodefactor("race", form="sum"), response="weight", 
+                reference = ~Poisson, 
+                control=control.ergm(MCMLE.trustregion=200))
+summary(count_mod2)
+```
+
+```{r}
+count_sim_mod2=simulate(count_mod2, nsim=1)
+ggnet2(count_sim_mod2, node.color="gender", node.size=7,
+       palette=c("male"="navy", "female"="lightskyblue"), 
+       edge.size=get.edge.attribute(count_sim_mod2, "weight")/2.75, 
+       edge.color="grey80")+
+  guides(size=FALSE)
+```
+
+```{r}
+count_sim_mod2_stats=simulate(count_mod2, nsim=100, monitor=~nonzero,
+                              output=c("stats"))
+data.frame(sim=mean(count_sim_mod2_stats[, "nonzero"]), 
+           empirical=summary(social_net ~ nonzero, response="weight"))
+count_mod3=ergm(social_net ~ sum + nodematch("gender", form="sum") + 
+                  nodematch("race", form="sum") + 
+                  nodefactor("gender", form="sum") + 
+                  nodefactor("race", form="sum") + nonzero,
+                response="weight", 
+                reference = ~Poisson, 
+                control=control.ergm(MCMLE.trustregion=200))
+summary(count_mod3)
+```
+
+```{r}
+count_mod4=ergm(social_net ~ sum + nodematch("gender", form="sum") + 
+                  nodematch("race", form="sum") + 
+                  nodefactor("gender", form="sum") + 
+                  nodefactor("race", form="sum") + nonzero +
+                  transitiveweights("min", "max", "min"),
+                  response="weight", 
+                reference = ~Poisson, 
+                control=control.ergm(MCMLE.trustregion=100))
+summary(count_mod4)
+```
+
+
+

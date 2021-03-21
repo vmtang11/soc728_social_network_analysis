@@ -1,0 +1,291 @@
+---
+title: "Labs 4 and 5"
+author: "Vanessa Tang"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Chapter 4: R Tutorial on Missing Network Data
+
+### Part 1: Network Data with Missing Nodes
+
+```{r}
+# missing nodes
+sorority_attributes=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/sorority_attributes_wmissingdata.csv")
+
+# friendships
+sorority_matrix=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/sorority_matrix_wmissingdata.csv", row.names=1)
+sorority_matrix=as.matrix(sorority_matrix)
+```
+
+Look at missing data: `sorority_attributes$missing` == 1
+```{r}
+missing=which(sorority_attributes[,"missing"]==1)
+missing
+```
+
+Look at not missing data: `sorority_attributes$missing` == 0
+```{r}
+notmissing=which(sorority_attributes[,"missing"]==0)
+notmissing
+```
+
+First missing node: 2
+- Full of NA because node 2 is missing (no info)
+```{r}
+sorority_matrix[2, 1:15]
+```
+
+Look at column for missing node 2: show if other people have info for node 2
+- some info from other nodes: 0 no relationship, 1 relationship, NA missing node
+- don't know if node 2 would have also nominated nodes but know if another nonmissing node nominated node 2
+```{r}
+print(sorority_matrix[1:15, 2])
+print(sorority_matrix[2, 7])
+```
+
+### Part 2: Constructing the Network Using no Imputation
+
+Remove missing nodes
+```{r}
+sorority_matrix_removemissing=sorority_matrix[-missing, -missing]
+dim(sorority_matrix_removemissing)
+```
+
+Create igraph object
+```{r}
+library(igraph)
+
+sororitynet_noimpute=graph_from_adjacency_matrix(
+  adjmatrix=sorority_matrix_removemissing, mode="directed")
+
+sororitynet_noimpute
+```
+
+Plot
+```{r}
+plot(sororitynet_noimpute, vertex.label=NA, vertex.size=10, 
+     edge.arrow.size=.5, edge.arrow.width=.5)
+```
+
+Mean closeness
+1. Define shortest path
+2. Take inverse
+3. Mean
+```{r}
+# shortest path
+dist_noimpute=distances(graph=sororitynet_noimpute, mode="out")
+diag(dist_noimpute)=NA 
+
+# inverse and mean
+mean_closeness_noimpute=mean(1/dist_noimpute, na.rm=T) 
+mean_closeness_noimpute
+```
+
+Creating closness function: same as above but easier
+```{r}
+closeness_function=function(network){
+dist_matrix=distances(graph=network, mode="out")
+diag(dist_matrix)=NA
+mean_closeness=mean(1/dist_matrix, na.rm=T)
+mean_closeness
+}
+
+closeness_function(sororitynet_noimpute)
+```
+
+### Part 3: Gauging the Level of Bias
+
+#### 3.1 Gauging Bias Using Past Results
+Expected bias = .25
+Table 6 (in Smith and Moody 2013)
+
+#### 3.2 Gauging Bias Using Predictive Models
+http://www.soc.duke.edu/~jmoody77/missingdata/calculator.htm
+- size = 72 (num nodes)
+- percent missing = 14/72 = 20%
+- indegree standard deviation = 1.61 (see below)
+- directed/undirected = directed
+- type of missing data
+- correlation between missing nodes and centrality at .25
+
+Expected bias = .19
+```{r}
+indeg=degree(sororitynet_noimpute, mode="in")
+sd(indeg)
+```
+
+### Part 4: Simple Imputation Options: Network Reconstruction
+
+Missing nodes with nominations
+```{r}
+# nominations to missing node
+nominations_missing_nodes=sorority_matrix[,missing]
+
+# num nominations to each missing node
+indeg_missing=colSums(nominations_missing_nodes, na.rm=T)
+
+# find missing nodes that received at least 1 nomination
+# only keep ones that got at least 1 nomination
+impute_nodes=missing[indeg_missing>0]
+impute_nodes
+```
+
+Missing nodes without nominations
+```{r}
+# nodes to remove: missing nodes with no nominations
+still_missing=missing[indeg_missing==0]
+still_missing
+```
+
+#### 4.1 Network Reconstruction: Directed (Asymmetric) Option
+
+Assume missing nodes have no output ties, only use input ties to missing node
+
+```{r}
+sorority_matrix_impute_directed=sorority_matrix 
+
+# outgoing ties from missing nodes = 0
+sorority_matrix_impute_directed[missing,]=0 
+
+# imputed matrix
+sororitynet_impute_directed=graph_from_adjacency_matrix( 
+  adjmatrix=sorority_matrix_impute_directed, mode="directed")
+```
+
+Plot
+- red: missing
+- blue: not missing
+
+```{r}
+cols=ifelse(sorority_attributes[,"missing"]==1, "red", "blue")
+table(cols, sorority_attributes[,"missing"])
+
+# add colors to network
+V(sororitynet_impute_directed)$color=cols 
+
+# remove nodes with no nominations (still_missing)
+sororitynet_impute_directed=delete_vertices(graph=sororitynet_impute_directed, 
+                                            v=still_missing)
+
+plot(sororitynet_impute_directed, vertex.label=NA, vertex.size=7, 
+     edge.arrow.size=.75, edge.arrow.width=.75)
+```
+
+Closeness
+Closeness using directed imputation (.09) is lower than no imputation (.11)
+```{r}
+mean_closeness_impute_directed=closeness_function(sororitynet_impute_directed)
+mean_closeness_impute_directed
+```
+
+#### 4.2 Network Reconstruction: Reciprocated Option
+
+Assume all ties reciprocated: if there is an input tie to missing node, then missing node would also have output tie to receiver
+- set outgoing ties from missing nodes equal to incoming ties to missing node: `nominations_missing_nodes`
+
+```{r}
+sorority_matrix_impute_recip=sorority_matrix 
+head(nominations_missing_nodes)
+```
+- cols: missing nodes
+- 1 = non-missing node (rows) nominated missing node (cols)
+
+Need to transpose matrix to go from missing -> non-missing nodes
+- set NA to 0: ties between missing nodes
+- transpose to get missing to not missing ties
+- set outgoing ties for missing nodes
+```{r}
+nominations_missing_nodes[is.na(nominations_missing_nodes)]=0
+outgoing_ties_recip=t(nominations_missing_nodes) 
+sorority_matrix_impute_recip[missing,]=outgoing_ties_recip
+
+# look at node 2 (missing)
+sorority_matrix_impute_recip[1:15, 2]         # outgoing ties
+sorority_matrix_impute_recip[2, 13]           # new tie between 2 and 13
+sorority_matrix_impute_directed[2, 13]        # originally no tie between 2 and 13
+```
+
+Create network
+- remove still missing 
+```{r}
+sororitynet_impute_recip=graph_from_adjacency_matrix( 
+  adjmatrix=sorority_matrix_impute_recip, mode="directed")
+sororitynet_impute_recip=delete_vertices(graph=sororitynet_impute_recip, 
+                                         v=still_missing)
+sororitynet_impute_recip
+```
+
+Closeness
+Mean closness using reciporcated ties imputation (.16) is higher than no imputation (.11) and directed imputation (.09)
+```{r}
+mean_closeness_impute_recip=closeness_function(sororitynet_impute_recip)
+mean_closeness_impute_recip
+```
+
+#### 4.3 Network Reconstruction: Probabilistic Option
+
+If tie exists from nonmissing to missing, assume tie exists from missing to nonmissing with probability p (reciprocity rate)
+
+Reciprocity rate
+- ratio: symmetric/(asymmetric + symmetric)
+- 42% of the time when i nominates j, j nominates i
+```{r}
+p=reciprocity(graph=sororitynet_noimpute, mode="ratio")
+p
+```
+
+Imputing
+- transpose: nominations to missing nodes (rows = missing, cols = nonmissing)
+- For each nomination from n (non-missing) to m (missing), we will take a draw from a binomial distribution with probability set to p
+- Only draw when outgoing_ties_prob is equal to 1 (nonmissing node nominates missing node)
+```{r}
+sorority_matrix_impute_prob=sorority_matrix
+
+# transpose
+outgoing_ties_prob=t(nominations_missing_nodes)
+
+set.seed(200)
+
+# take draws from binomial
+outgoing_ties_prob[outgoing_ties_prob==1]=
+  rbinom(outgoing_ties_prob[outgoing_ties_prob==1], size=1, prob=p) 
+
+# set outgoing ties for missing nodes
+sorority_matrix_impute_prob[missing,]=outgoing_ties_prob
+```
+
+Creating network
+- remove missing nodes with no incoming ties
+```{r}
+sororitynet_impute_prob=graph_from_adjacency_matrix( 
+  adjmatrix=sorority_matrix_impute_prob, mode="directed")
+
+sororitynet_impute_prob=delete_vertices(graph=sororitynet_impute_prob, 
+                                        v=still_missing)
+```
+
+Closeness
+Mean closeness using probabilistic imputing (.14) is higher than no imputation (.11) and simple directed imputation (.09) but lower than reciprocated imputation (.16)
+```{r}
+mean_closeness_impute_prob=closeness_function(sororitynet_impute_prob)
+mean_closeness_impute_prob
+```
+
+#### 4.4 Comparing Estimates
+```{r}
+closeness_table=data.frame(true=.15, 
+                           noimpute=mean_closeness_noimpute, 
+                           direct=mean_closeness_impute_directed, 
+                           recip=mean_closeness_impute_recip, 
+                           prob=mean_closeness_impute_prob)
+
+closeness_table
+```
+
+- reciprocated did best in this case
+- directed was worse than doing nothing
+- only know true because its simulated data

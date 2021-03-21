@@ -1,0 +1,418 @@
+---
+title: "Lab 8"
+author: "Vanessa Tang"
+date: "2/21/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Chapter 8: R Tutorial on Network Cohesion and Communities
+
+## 1. Setting up the Session and Reading in First Example Network
+
+```{r}
+library(igraph)
+library(ggplot2)
+
+class182_networkdata=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/class182_networkdata.csv")
+head(class182_networkdata) 
+
+class182_attributes=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/class182_attributedata.csv")
+class182_attributes
+
+edgelist_friendship=class182_networkdata[class182_networkdata$friend_tie>0,
+                                         c("ego", "alter", "friend_tie")]
+head(edgelist_friendship)
+
+net182_friend=graph_from_data_frame(d=edgelist_friendship, directed=T,
+                                      vertices=class182_attributes) 
+net182_friend 
+```
+
+## 2. Cohesion
+
+Plot
+```{r}
+plot(net182_friend, vertex.label=NA, edge.arrow.size=.5, 
+     edge.arrow.width=.5, edge.color="light gray", 
+     edge.curved=.2, vertex.frame.color= NA, margin=0)
+```
+
+```{r}
+# density
+edge_density(net182_friend)
+
+# components
+components_friendship=components(graph=net182_friend, mode="weak")
+components_friendship
+
+# proportion of nodes in each component
+components_friendship$csize/sum(components_friendship$csize) 
+
+# biconnected components
+bicomponents_friendship=biconnected_components(graph=net182_friend)
+bicomponents_friendship$components
+```
+
+```{r}
+net182_friend_und=as.undirected(net182_friend, mode='collapse') 
+
+net182_friend_und
+```
+
+Vertex disjoint: node to remove to disconnect source and target
+```{r}
+vertex_disjoint_paths(graph=net182_friend_und, source=1, target=9)
+```
+
+Vertex connectivity: num nodes to remove to disconnect
+```{r}
+vertex_connectivity(graph=net182_friend_und)
+
+# remove isolates and recalc
+isolates=which(degree(net182_friend_und)==0)
+
+net182_noisolates=delete_vertices(net182_friend_und, isolates)
+
+vertex_connectivity(graph=net182_noisolates)
+```
+
+## 3. Community (or Group) Detection
+
+### 3.1. Walktrap
+
+4 steps
+```{r}
+friend_comm_wt4=cluster_walktrap(graph=net182_friend_und, steps=4, 
+                                 membership=T)
+
+mems_wt_4step=membership(friend_comm_wt4)
+mems_wt_4step
+
+mod_wt_4step=modularity(friend_comm_wt4)
+mod_wt_4step
+```
+
+3 steps
+```{r}
+friend_comm_wt3=cluster_walktrap(graph=net182_friend_und, steps=3, 
+                                 membership=T)
+mems_wt_3step=membership(friend_comm_wt3)
+mems_wt_3step
+
+mod_wt_3step=modularity(friend_comm_wt3)
+mod_wt_3step
+```
+
+Compare
+```{r}
+table(mems_wt_4step, mems_wt_3step)
+```
+
+```{r}
+par(mfrow=c(1, 2))
+layout=layout.fruchterman.reingold(net182_friend) 
+
+plot(net182_friend_und, layout=layout, #note the use of layout
+     vertex.color=mems_wt_4step, edge.arrow.size=.5,
+     edge.arrow.width=.5, edge.color="light gray", 
+     vertex.size=20, main="Walk Trap: 4 Steps", margin=0)
+
+plot(net182_friend_und, layout=layout, #note the use of layout
+     vertex.color=mems_wt_3step, edge.arrow.size=.5, 
+     edge.arrow.width=.5, edge.color="light gray", 
+     vertex.size=20, main="Walk Trap: 3 Steps", margin=0)
+```
+
+### 3.2. Edge Betweenness
+
+```{r}
+friend_comm_eb=cluster_edge_betweenness(graph=net182_friend_und)
+mems_eb=membership(friend_comm_eb)
+table(mems_wt_3step, mems_eb) 
+plot(as.dendrogram(friend_comm_eb))
+```
+
+```{r}
+extract_modularity_data=function(communities, graph){
+
+mems_list=list() #list where membership information will be saved
+num_communities=NA #vector where number of communities will be saved
+modularities=NA #vector to store modularity scores
+
+#Extracting levels of aggregation, or steps,
+#in the hierarchical merge data.
+num_merges=0:nrow(communities$merges)
+
+#Note that we start from 0 as the first level
+#corresponds to all nodes in their own community,
+#and that does not have a row in the  merge data frame.
+
+#Looping through each level of aggregation
+
+for (x in 1:length(num_merges)){
+  
+  #We first extract the membership 
+  #information at the given merge level using a 
+  #cut_at function. The inputs are the community
+  #object and the merge step of interest. 
+  
+  mems_list[[x]]=cut_at(communities, steps=num_merges[x])
+
+  #Now we calculate the number of communities associated
+  #with the given clustering solution: 
+  num_communities[x]=length(unique(mems_list[[x]]))
+
+  #Let's also calculate the modularity score, just to make sure
+  #we get the right value for that set of community memberships:
+  modularities[x]=modularity(graph, mems_list[[x]])
+    }
+
+#We will now put together our extracted 
+#information in a data frame. 
+
+plot_data=data.frame(modularity=modularities, 
+                     num_communities=num_communities)
+
+#Let's reorder to go from low number of communities to high:
+mems_list=mems_list[order(plot_data$num_communities)]
+plot_data=plot_data[order(plot_data$num_communities),] 
+rownames(plot_data)=1:nrow(plot_data)
+
+#outputting resuts in a list:
+list(summary_data=plot_data, membership_list=mems_list)
+}
+
+modularity_data=extract_modularity_data(communities=friend_comm_eb, 
+                                        graph=net182_friend_und)
+
+summary_data=modularity_data[[1]]
+summary_data
+```
+
+```{r}
+ggplot(summary_data, aes(num_communities, modularity))+
+  geom_bar(stat="identity", fill="grey")+
+  geom_line(color="black", linetype="solid")+ 
+  geom_point(shape=19, size=1, color="black")+
+  labs(title="Modularity by Number of Communities",
+       x="Number of Communities", y="Modularity")
+```
+
+```{r}
+mems_list=modularity_data[[2]]
+mems_ids=which(summary_data$num_communities==4) 
+mems_eb4=mems_list[[mems_ids]]
+mems_eb4
+```
+
+### 3.3. Multi-level Clustering
+
+```{r}
+friend_comm_multi=cluster_louvain(graph=net182_friend_und)
+friend_comm_multi$memberships[,1:10]
+
+mems_mult_level1=friend_comm_multi$memberships[1,]
+mems_mult_level2=friend_comm_multi$memberships[2,]
+
+table(mems_mult_level1, mems_mult_level2) 
+
+friend_comm_multi$modularity
+```
+
+```{r}
+par(mfrow=c(1,2))
+
+#4 communities
+plot(net182_friend_und, layout=layout, vertex.color=mems_mult_level2,
+     edge.arrow.size=.5,edge.arrow.width=.5, 
+     edge.color="light gray", vertex.size=20,
+     main="Level 2", margin=0)
+
+#5 communities
+plot(net182_friend_und, layout=layout, vertex.color=mems_mult_level1, 
+     edge.arrow.size=.5,edge.arrow.width=.5, 
+     edge.color="light gray", vertex.size=20,
+     main="Level 1", margin=0)
+```
+
+### 3.4. Cohesive Blocking
+
+```{r}
+friend_comm_cohesive=cohesive_blocks(graph=net182_friend_und)
+friend_comm_cohesive
+```
+
+```{r}
+plot(friend_comm_cohesive, net182_friend_und) 
+```
+
+## 4. Demographic Characteristics
+
+```{r}
+library(car)
+cols=recode(class182_attributes$race, as.factor=F, "c('black')='blue'; 
+            else='white'")
+table(class182_attributes$race,cols) 
+```
+
+```{r}
+plot(friend_comm_eb, net182_friend_und, col=cols, layout=layout, 
+     main="Race Mapped onto Communities", margin=0)
+```
+
+```{r}
+proportion_function=function(communities, attribute){ #inputs are community 
+#membership and the attribute vector
+#Here we calculate the proportion that fall into each category 
+#found in attribute. We first do a table and then find the proportion 
+#in each category. This is done for each community (using the tapply 
+#option over the communities).
+
+dat=tapply(factor(attribute), communities, function(x) {y=table(x);y/sum(y)})
+
+do.call(rbind, dat) #We then output it as a matrix using a do.call 
+#command and rbind option
+} 
+
+proportion_function(communities=mems_eb, attribute=class182_attributes$race)
+```
+
+```{r}
+table_list=list()
+for (i in 1:max(mems_eb)){
+tab=table(class182_attributes$race[mems_eb==i])
+table_list[[i]]=tab/sum(tab)
+}
+
+do.call(rbind, table_list)
+
+table(class182_attributes$race)
+```
+
+## 5. Community Overlap
+
+```{r}
+class182_dyads=class182_networkdata[,c("ego", "alter")]
+head(class182_dyads)
+
+mat182_friend=as_adjacency_matrix(net182_friend_und, sparse=F)
+diag(mat182_friend)=NA 
+friend=c(t(mat182_friend))  
+
+same_comm=mems_mult_level2[class182_dyads$ego]==mems_mult_level2[class182_dyads$alter]  
+
+table(same_comm, friend)
+```
+
+Odds ratio: odds of 2 people in same community choosing each other as friends
+```{r}
+(70*134)/(14*22)
+```
+
+## 6. Big Data Example (Supplementary Section)
+
+```{r}
+email_edges=read.table(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/email-EuAll.txt")
+
+dim(email_edges)
+colnames(email_edges)=c("ego", "alter")
+email_edges=email_edges+1
+email_edges=email_edges[email_edges[,1]!=email_edges[,2],]
+email_network=graph_from_data_frame(d=email_edges, directed=T, 
+                                    vertices=(id=as.numeric(1:265214)))
+email_network=as.undirected(email_network, mode="collapse")
+```
+- error reading in data
+
+```{r}
+email_network=as.undirected(email_network, mode="collapse")
+email_mems=email_comm_multi$memberships
+nrow(email_mems) 
+
+length.func=function(x){length(unique(x))} 
+num_comms=apply(email_mems, 1, length.func) 
+num_comms 
+
+email_comm_multi$modularity
+```
+
+```{r}
+mems_email_level4=email_comm_multi$memberships[4,]
+summary(as.numeric(table(mems_email_level4))) 
+```
+
+```{r}
+subcommunity_function=function(graph, initial_communities, community_number){
+#The inputs will be the original network, 
+#the original community/group memberships and 
+#the community/group number of interest (i.e., the community 
+#that you want to divide further).
+
+#here will create a subgraph of just the community of interest
+subgraph1=induced_subgraph(graph=graph, vids=which(initial_communities==community_number)) 
+
+#We now perform a community detection algorithm (using fast and greedy) 
+#on the subgraph
+comm1=cluster_fast_greedy(graph=subgraph1) 
+
+mems_subgraph1=membership(comm1) #grabbing the community membership of each 
+#person in the subgraph
+
+#Now we grab the ids of those in the subgraph, so we can map them back 
+#onto the original, full network 
+ids_map=as.numeric(vertex_attr(subgraph1,"name")) 
+
+mems_new=initial_communities #just copying the original communities
+
+#Here, we begin to relabel the communities so we can put them back onto the 
+#original set of communties on the full network. We want to make sure that 
+#these new community ids are unique, so we take the max
+#original community number and add that to the community ids on the subgraph.
+mems_subgraph1_relabel=mems_subgraph1+max(initial_communities) 
+
+#Here we put the new communities onto a vector of community 
+#membership corresponding to the whole network. 
+mems_new[ids_map]=mems_subgraph1_relabel 
+
+#Note we just change those in the subgraph of interest.
+
+#We can then relabel all communities, if desired, to take out the old 
+#community number and put in order from low to high:
+num_comms_new=length(unique(mems_new))
+mems_updated=as.numeric(as.character(factor(mems_new, 
+                                            labels=1:num_comms_new)))
+
+#here we output the subgraph, the membership and the updated
+#vector of community membership:
+list(subgraph=subgraph1,mems_subgraph=mems_subgraph1, 
+     membership_updated=mems_updated)
+}
+
+subcommunity_dat=subcommunity_function(graph=email_network, 
+                        initial_communities=mems_email_level4,
+                        community_number=2655) 
+
+subnet=subcommunity_dat$subgraph
+mems_subnet=subcommunity_dat$mems_subgraph
+mems_updated=subcommunity_dat$membership_updated
+
+layout_email=layout.fruchterman.reingold(subnet)
+
+plot(subnet, vertex.label=NA, vertex.size=.6, layout=layout_email, 
+     edge.arrow.size=.5, edge.arrow.width=.5, edge.color="light gray", 
+     edge.curved=.2, vertex.frame.color=NA, 
+     vertex.color=mems_subnet, margin=0)
+```
+
+```{r}
+data.frame(table(mems_updated[mems_email_level4==2655]))
+modularity(email_network, mems_updated)
+
+subcommunity_dat=subcommunity_function(graph=email_network,
+                                      initial_communities=mems_updated,
+                                      community_number=33)  
+```

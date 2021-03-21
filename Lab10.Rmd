@@ -1,0 +1,401 @@
+---
+title: "Lab 10"
+author: "Vanessa Tang"
+date: "3/11/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Chapter 10: R Tutorial on Positions and Roles in Networks
+
+## 1. Reading in Example Network Data
+
+```{r}
+library(igraph)
+
+class182_networkdata=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/class182_networkdata.csv")
+head(class182_networkdata)
+```
+
+```{r}
+class182_attributes=read.csv(file="https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/data/class182_attributedata.csv")
+head(class182_attributes)
+```
+
+Friendship
+```{r}
+edgelist_friendship=class182_networkdata[class182_networkdata$friend_tie>0, 
+                                         c("ego", "alter", "friend_tie")]
+head(edgelist_friendship)
+```
+
+```{r}
+net182_friend=graph_from_data_frame(d=edgelist_friendship, directed=T, 
+                                    vertices=class182_attributes) 
+net182_friend
+```
+
+Social Interaction Network
+```{r}
+edgelist_social=class182_networkdata[class182_networkdata$social_tie>0, 
+                                     c("ego", "alter", "social_tie")]
+```
+
+Social Network
+```{r}
+net182_social=graph_from_data_frame(d=edgelist_social, directed=F, 
+                                    vertices=class182_attributes) 
+
+# remove repeat interactions
+net182_social=simplify(net182_social, edge.attr.comb="mean") 
+
+net182_social
+```
+
+Task Network
+```{r}
+edgelist_task=class182_networkdata[class182_networkdata$task_tie>0, 
+                                   c("ego", "alter", "task_tie")]
+
+net182_task=graph_from_data_frame(d=edgelist_task, directed=F, 
+                                  vertices=class182_attributes) 
+
+# again remove repeats
+net182_task=simplify(net182_task, edge.attr.comb="mean")
+
+net182_task
+```
+
+## 2. Getting the Data Ready
+
+Matrices for each relation: friend, social, task
+- Helps define structural equivalence
+```{r}
+friend_mat=as_adjacency_matrix(net182_friend, attr="friend_tie", sparse=F) 
+social_mat=as_adjacency_matrix(net182_social, attr="social_tie", sparse=F)
+task_mat=as_adjacency_matrix(net182_task, attr="task_tie", sparse=F)
+
+friend_mat
+```
+
+Matrix of incoming ties = transpose friend matrix
+```{r}
+friend_mat_in=t(friend_mat)
+```
+
+Combine info
+- Standardize columns for comparison: divide by st dev
+- Mean center
+
+```{r}
+# subtract mean and divide by st dev
+friend_mat_std=(friend_mat-mean(friend_mat))/sd(friend_mat) #for friendship
+friend_mat_in_std=t(friend_mat_std) #for the incoming friendship ties
+task_mat_std=(task_mat-mean(task_mat))/sd(task_mat) #for task
+social_mat_std=(social_mat-mean(social_mat))/sd(social_mat) #for social
+
+# combine
+friends_task_social_std=cbind(friend_mat_std, friend_mat_in_std, 
+                              task_mat_std, social_mat_std) 
+dim(friends_task_social_std) 
+```
+
+```{r}
+friends_task_social=cbind(friend_mat, friend_mat_in, task_mat, social_mat) 
+```
+
+## 3. Calculating Distance Between Nodes in the Network based on Pattern of Ties
+
+```{r}
+# euclidean distance matrix: smaller means more similar ties
+euclid_dist=dist(x=friends_task_social_std, method="euclidean") 
+as.matrix(euclid_dist)[,1:5]
+```
+
+```{r}
+fit=cmdscale(euclid_dist, k=2) 
+
+x=fit[,1]
+y=fit[,2]
+
+plot(x, y, xlab="Coordinate 1", ylab="Coordinate 2", 
+     main="2 Dimensional MDS Solution", type="n") 
+text(x, y, labels=1:length(x), cex=1)
+```
+
+## 4. Defining Positions
+
+- Nodes are placed into positions based on having the same pattern of ties to other nodes
+- Could this be helpful for Capstone? Students that have taken similar classes are places in similar positions
+
+### 4.1. Hierarchical Clustering
+
+```{r}
+hc=hclust(euclid_dist)
+plot(hc)
+```
+
+```{r}
+plot(hc)
+plot.clusters=rect.hclust(hc, h=12)
+```
+
+```{r}
+plot(hc)
+plot.clusters=rect.hclust(hc, h=8)
+```
+
+- the number of clusters increases as we lower the distance threshold
+
+```{r}
+hc_ids=cutree(hc, h=12)  
+hc_ids
+```
+
+```{r}
+library(NbClust)
+
+clusters=NbClust(data=friends_task_social_std, distance="euclidean",
+                 method="complete", index=c("ch"))  
+clusters 
+```
+- how is the "optimal solution" defined?
+
+## 5. Role Analysis
+
+### 5.1 Permuting the Matrix by Position
+
+```{r}
+id_dat=data.frame(ids=class182_attributes$ids, position=hc_ids)
+id_dat=id_dat[order(id_dat$position),]
+
+# Using matrices from above: social
+social_mat_rearrange=social_mat[id_dat$ids, id_dat$ids]
+
+library(RColorBrewer)
+
+column_cols=c("red", "green", "black", "blue")
+
+heatmap(social_mat_rearrange, Rowv=NA, Colv=NA, revC=T,
+        col=colorRampPalette(brewer.pal(6, "Blues"))(25),
+        ColSideColors=column_cols[id_dat$position],
+        RowSideColors=column_cols[id_dat$position], symm=T)
+```
+
+- most social interactions happen within position (within same color)
+
+### 5.2 Constructing a Blockmodel
+
+- Blockmodel: a matrix where the positions themselves are the nodes, or blocks, of interest
+- All actors in the ‘red’ position (1, 9, 10, 12 and 15 in the figure above) get collapsed into a single node, or block, labeled, “Block 1
+- Shows density of within and between block ties
+
+```{r}
+detach(package:igraph)
+library(sna)
+
+blockmod_friend=blockmodel(friend_mat, ec=hc_ids)
+blockmod_task=blockmodel(task_mat, ec=hc_ids)
+blockmod_social=blockmodel(social_mat, ec=hc_ids)
+
+blockmod_friend
+```
+
+### 5.3 Plotting a Blockmodel
+
+```{r}
+library(ggraph)
+library(tidygraph)
+
+block_model_edgelist_function=function(block_model, relation_label, 
+                                       directed=T){ 
+#Inputs are the blockmodel, the name of the relation, 
+#and if the relation is assumed to be undirected
+
+#First we grab the actual matrix from the blockmodel
+block_mat=block_model$block.model
+
+#Here we set any NA to 0
+block_mat[is.na(block_mat)]=0
+
+#Now we create a little network based on the matrix
+net_block=network(block_mat, loops=T, directed=directed)
+
+#Here we extract the edgelist:
+edges_netblock=as.edgelist(net_block)
+
+#Now we get the edge weights, stringing out the matrix
+#into a vector. We only extract those weights corresponding
+#to where an edge exists, defined by the edgelist 
+#extracted above.
+weight_edge=c(block_mat[edges_netblock])
+
+#Now we create a little data frame putting the information together.
+block_edgelist=data.frame(edges_netblock, weight=weight_edge, 
+                          Tie=relation_label)
+
+#Here we create the additional weighting scheme,
+#where weight is equal to 0, 1, or 2, depending if it is
+#less than the mean, greater than the mean (but less than 1 sd above mean)
+#or greater than 1 sd above the mean. 
+edge_mean=mean(block_mat)
+edge_sd=sd(block_mat)
+edge_max=max(block_mat)
+
+block_edgelist$WeightRecode=cut(block_edgelist$weight, 
+    breaks=c(0, edge_mean, edge_mean+edge_sd, edge_max),
+    include.lowest=T, right=F, labels=c("0", "1", "2")) 
+
+colnames(block_edgelist)[1:2]=c("sender", "receiver")
+
+block_edgelist
+}
+
+# create edgelists
+blockedges_friend=block_model_edgelist_function(block_model=blockmod_friend, 
+                                                relation_label="friendship", 
+                                                directed=T)
+blockedges_social=block_model_edgelist_function(block_model=blockmod_social, 
+                                                relation_label="social", 
+                                                directed=F)
+
+blockedges_task=block_model_edgelist_function(block_model=blockmod_task, 
+                                              relation_label="task", 
+                                              directed=F)
+
+blockedges_friend
+```
+
+Simple plot
+```{r}
+block_dat=rbind(blockedges_friend, blockedges_social, blockedges_task)
+block_dat=block_dat[block_dat$WeightRecode %in% c("1", "2"),]
+plot_net=tbl_graph(nodes=data.frame(ids=paste("Block", 1:4)), 
+                   edges=block_dat, directed=F)
+
+ggraph(plot_net, layout='circle') + 
+  geom_edge_parallel(aes(colour=Tie))+
+  geom_node_text(aes(label=ids), 
+                 nudge_x=c(.15, 0, -.15, 0),                         
+                 nudge_y=c(0, .10, 0, -.10))+ 
+  theme_graph()
+```
+
+Plot with loops
+```{r}
+ggraph(plot_net, layout='circle') + 
+  geom_edge_parallel(aes(colour=Tie))+
+  geom_edge_loop(aes(colour="friendship", span=45, strength=.5))+
+  geom_edge_loop(aes(colour="social", direction=90, span=45, strength=.5))+
+  geom_edge_loop(aes(colour="task", direction=135, span=45, strength=.5))+
+  geom_node_text(aes(label=ids), 
+                 nudge_x=c(.16, .17, -.16, 0),                         
+                 nudge_y=c(-.03, -.02, -.03, -.10))+
+  theme_graph()
+```
+
+Plot with loops and weights
+```{r}
+ggraph(plot_net, layout='circle') + 
+  geom_edge_parallel(aes(colour=Tie, width=WeightRecode), 
+                     sep=unit(2, "mm"))+
+  geom_edge_loop(aes(colour="friendship", span=45, 
+                     strength=.5, width=WeightRecode))+
+  geom_edge_loop(aes(colour="social", direction=90, span=45, 
+                     strength=.5, width=WeightRecode))+
+  geom_edge_loop(aes(colour="task", direction=135, span=45, 
+                     strength=.5, width=WeightRecode))+
+  scale_edge_width_manual(values=c(1, 2))+
+  geom_node_text(aes(label=ids), 
+                 nudge_x=c(.17, .18, -.17, 0),                         
+                 nudge_y=c(-.05, -.05, -.05, -.10))+
+  theme_graph()
+```
+
+### 5.4 Interpretation of Blockmodel
+
+Block 4
+- no friendship ties
+- socializes with block 1 and block 2 
+- heavy task interactions with block 1 and block 2
+- do more tasks than others in the classroom: calculate total number of tasks for each block
+
+Total level of task interactions for each block:
+```{r}
+rowSums(blockmod_task$block.model, na.rm=T)
+```
+
+Block 3
+- mostly friends and socialize with others in block 3
+- much lower levels of social interaction and task interactions with block 4, the teacher (compared to the level of contact between block 4 and block 1 and 2)
+
+Task interactions with block 4
+```{r}
+round(blockmod_task$block.model[,4], 3)
+```
+
+Gender and race for block 1 (high engagement)
+- high social interactions with each other 
+- very high levels of task engagement with the teacher
+```{r}
+table(class182_attributes$gender[hc_ids==1])
+table(class182_attributes$race[hc_ids==1])
+```
+
+Gender and race for block 3 (low engagement)
+- high internal social interaction 
+- low task engagement with the teacher
+```{r}
+table(class182_attributes$gender[hc_ids==3])
+table(class182_attributes$race[hc_ids==3])
+```
+
+# 6. Local Equivalence
+
+Triad census
+```{r}
+source("https://www.uni-due.de/hummell/rolecensus/f.rc.r")
+
+task_mat_binary=task_mat
+task_mat_binary[task_mat_binary>0]=1
+
+task_triads_ego=f.rc(task_mat_binary)
+
+dim(task_triads_ego)
+task_triads_ego[1:10, 1:10]
+```
+
+Use triad census matrix to see which nodes have similar patterns of task interactions
+- concor: clusters nodes into positions based on the correlations between rows
+
+```{r}
+source("https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/R/concor_functions.R")
+
+source("https://raw.githubusercontent.com/JeffreyAlanSmith/Integrated_Network_Science/master/R/clustConfigurations_concor.R")
+
+task_triads_ego_transpose=t(task_triads_ego)
+concor_results=concor(task_triads_ego_transpose, depth=6)
+concor_results
+```
+
+Calculate the observed correlation matrix and then produce the plot of fit statistics
+```{r}
+observed_correlation=cor(task_triads_ego_transpose)
+diag(observed_correlation)=NA
+
+concor_fit=clustConfigurations_concor(concor_results, observed_correlation) 
+```
+
+```{r}
+positions_triads=concor_results[,4]
+positions_triads
+```
+
+```{r}
+position_triad_mat=aggregate(task_triads_ego, 
+                             by=list(cluster=positions_triads), FUN=mean)
+position_triad_mat[,c(1, 2, 7, 8, 17, 18)]
+```
